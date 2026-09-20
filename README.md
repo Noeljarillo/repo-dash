@@ -44,7 +44,7 @@ If repo-dash is already running, starting it again just opens the page.
 
 ## What you see
 
-**Top bar.** Search across names, descriptions, stacks and README text. The counts (Repos, With changes, Claude, Hermes) double as filters. You can sort by most recent commit or A–Z.
+**Top bar.** Search across names, descriptions, stacks and README text. The counts (Repos, With changes, Claude, Hermes) double as filters. **Sort by** orders the cards by last commit, name, uncommitted changes, commits in the last 12 weeks, or number of files.
 
 **Groups.** Repos are grouped by their parent folder: `~/work/api` and `~/work/web` appear under **work**. To reorganize, move repos into folders.
 
