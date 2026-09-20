@@ -35,6 +35,7 @@ python3 dash.py ~/code ~/agents
 | `DASH_PORT`       | `7777`  | Port for the local server                 |
 | `DASH_DEPTH`      | `3`     | How many folder levels deep to look       |
 | `DASH_NO_BROWSER` | unset   | Set to `1` to skip opening the browser    |
+| `DASH_WEB`        | unset   | Web address for a git host, e.g. `nas=http://nas:3000` |
 
 ```bash
 DASH_PORT=8080 DASH_DEPTH=4 python3 dash.py ~/code
@@ -61,7 +62,14 @@ If repo-dash is already running, starting it again just opens the page.
 
 A repo often lives in more than one place — a self-hosted Gitea at the office and GitHub as a mirror. repo-dash reads **every** remote, not just `origin`:
 
-- Each remote is named by its host: GitHub, GitLab, Gitea, Codeberg, or the hostname itself for anything else. SSH (`git@host:owner/repo`), `git://` and HTTP remotes all become links you can open; passwords in remote URLs are never shown. Hosts on your LAN (`gitea.local`, an IP address) are linked over `http`.
+- Each remote is named by its host: GitHub, GitLab, Gitea, Codeberg, or the host itself (with its port) for anything else. A remote you named `gitea` is labelled Gitea too. SSH (`git@host:owner/repo`), `git://` and HTTP remotes all become links you can open; passwords in remote URLs are never shown. Hosts on your LAN (`gitea.local`, an IP address) are linked over `http`, and an HTTP remote keeps its port, so `http://gitea.lan:3000/me/x.git` links to `http://gitea.lan:3000/me/x`.
+- **SSH remotes don't carry a web port**, so `ssh://git@nas:2222/me/x.git` can only be guessed at. Give it the real address once:
+
+  ```bash
+  DASH_WEB="nas=http://nas:3000" python3 dash.py
+  ```
+
+  Separate several hosts with commas: `DASH_WEB="nas=http://nas:3000,git.local=https://git.local"`.
 - Each remote gets its **own** sync state: *in sync*, *3 to push*, or *branch not pushed* when the current branch doesn't exist there at all. So a repo pushed to Gitea but never mirrored to GitHub shows up immediately.
 - A repo with no remote is marked **local only**.
 - The counts come from refs already on disk, so scanning never touches the network. Run `git fetch` if you want fresher "to pull" numbers.

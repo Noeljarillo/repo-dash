@@ -27,6 +27,9 @@ STACK = [("Next.js", ['"next"']), ("React", ['"react"']), ("Vue", ['"vue"']), ("
          ("Docker", ["Dockerfile", "docker-compose.yml", "compose.yml"]), ("Foundry", ["foundry.toml"]),
          ("Hardhat", ["hardhat.config.js", "hardhat.config.ts"]), ("Xcode", ["Package.swift"])]
 MAC = platform.system() == "Darwin"
+# DASH_WEB maps a git host to its web address, for servers whose URL can't reveal it
+# (an SSH remote never carries the web port). e.g. DASH_WEB="nas=http://nas:3000,gitea.local=https://git.me"
+WEB = dict(pair.split("=", 1) for pair in os.environ.get("DASH_WEB", "").split(",") if "=" in pair)
 NAMED_HOSTS = {"github.com": "GitHub", "gitlab.com": "GitLab", "bitbucket.org": "Bitbucket",
                "codeberg.org": "Codeberg", "git.sr.ht": "SourceHut", "dev.azure.com": "Azure DevOps"}
 
@@ -37,37 +40,43 @@ def browse_url(url):
     url = url.strip()
     if not url or url.startswith(("/", ".", "file:")) or "://" not in url and ":" not in url:
         return ""                                               # local path or bare name
-    scheme = "https"
+    scheme, ssh = "https", False
     if url.startswith(("http://", "https://", "git://", "ssh://")):
         scheme, _, rest = url.partition("://")
-        if scheme in ("git", "ssh"):
+        ssh = scheme in ("git", "ssh")
+        if ssh:
             scheme = "https"
     elif "@" in url and ":" in url:                              # git@host:owner/repo.git
+        ssh = True
         rest = url.split("@", 1)[1].replace(":", "/", 1)
     else:
         return ""
     rest = rest.split("@")[-1]                                   # drop any user:password@
     host, _, path = rest.partition("/")
-    host = host.split(":")[0] if host.count(":") and not host.endswith(":") else host
     if not host or not path:
         return ""
-    local = host in ("localhost", "127.0.0.1") or host.endswith(".local") or "." not in host \
-        or host.replace(".", "").isdigit()
-    if local:
+    name, _, port = host.partition(":")
+    if name in WEB or host in WEB:                               # user-supplied web address wins
+        return f"{WEB.get(host) or WEB[name]}".rstrip("/") + "/" + path.removesuffix(".git").strip("/")                          # keep the port: :3000 is where Gitea lives
+    if ssh or not port.isdigit():
+        port = ""                                                # an SSH port is never the web port
+    bare = name.removeprefix("www.")
+    local = bare in ("localhost", "127.0.0.1") or bare.endswith(".local") or "." not in bare \
+        or bare.replace(".", "").isdigit()
+    if local and scheme == "https" and not url.startswith("https://"):
         scheme = "http"                                          # LAN servers rarely have TLS
-    return f"{scheme}://{host}/{path.removesuffix('.git').strip('/')}"
+    return f"{scheme}://{name}{':' + port if port else ''}/{path.removesuffix('.git').strip('/')}"
 
 
-def host_label(web_url):
+def host_label(web_url, remote_name=""):
     host = web_url.split("://", 1)[1].split("/")[0]
-    if host in NAMED_HOSTS:
-        return NAMED_HOSTS[host]
-    bare = host.removeprefix("www.")
-    if "gitea" in bare or "forgejo" in bare:
-        return "Gitea"
-    if "gitlab" in bare:
-        return "GitLab"
-    return bare
+    bare = host.removeprefix("www.").split(":")[0]
+    if bare in NAMED_HOSTS:
+        return NAMED_HOSTS[bare]
+    for word, label in (("gitea", "Gitea"), ("forgejo", "Forgejo"), ("gitlab", "GitLab"), ("bitbucket", "Bitbucket")):
+        if word in bare or word in remote_name.lower():          # remote named "gitea" counts too
+            return label
+    return host                                                  # host:port, so you can tell two servers apart
 
 
 def find_repos():
@@ -136,7 +145,7 @@ def info(repo):
         if any(r["name"] == name for r in remotes):
             continue
         web = browse_url(url.rsplit(" ", 1)[0])
-        remotes.append({"name": name, "url": web, "host": host_label(web) if web else name,
+        remotes.append({"name": name, "url": web, "host": host_label(web, name) if web else name,
                         **sync_state(repo, name, branch)})
     remotes.sort(key=lambda r: r["name"] != "origin")   # origin first
     unsynced = [r for r in remotes if r["push"] or r["missing"]]
