@@ -52,10 +52,20 @@ If repo-dash is already running, starting it again just opens the page.
 - a one-line description taken from the README, `package.json` or `pyproject.toml`, or the top-level files if there's none
 - a language bar with percentages
 - detected tools and frameworks: Next.js, React, FastAPI, Docker, PyTorch, Ethers, Anthropic and more
-- the branch, uncommitted changes (amber), commits to push or pull, time since the last commit, and a 12-week activity chart
+- the branch, uncommitted changes (amber), the state of **each remote**, time since the last commit, and a 12-week activity chart
 - **✳ Claude** / **☤ Hermes** marks for repos built with those agents
 
-**Detail panel.** Click a card to open a side panel with the formatted README, the file list and git details, plus buttons to open the repo in **Cursor**, **VS Code**, **Terminal**, **Finder** or on **GitHub**, or to copy its path.
+**Detail panel.** Click a card to open a side panel with the formatted README, the file list and git details, plus buttons to open the repo in **Cursor**, **VS Code**, **Terminal**, **Finder** or on any of its remotes, or to copy its path.
+
+### Several remotes (GitHub, Gitea, GitLab…)
+
+A repo often lives in more than one place — a self-hosted Gitea at the office and GitHub as a mirror. repo-dash reads **every** remote, not just `origin`:
+
+- Each remote is named by its host: GitHub, GitLab, Gitea, Codeberg, or the hostname itself for anything else. SSH (`git@host:owner/repo`), `git://` and HTTP remotes all become links you can open; passwords in remote URLs are never shown. Hosts on your LAN (`gitea.local`, an IP address) are linked over `http`.
+- Each remote gets its **own** sync state: *in sync*, *3 to push*, or *branch not pushed* when the current branch doesn't exist there at all. So a repo pushed to Gitea but never mirrored to GitHub shows up immediately.
+- A repo with no remote is marked **local only**.
+- The counts come from refs already on disk, so scanning never touches the network. Run `git fetch` if you want fresher "to pull" numbers.
+- **Not saved** filters to repos with uncommitted work or anything unpushed to any remote.
 
 **Keyboard.** `/` jumps to search, `Enter` opens the first match in Cursor, and `Esc` clears the search or closes the panel.
 

@@ -101,6 +101,12 @@ main { padding-bottom: 64px; }
 .pill.warn::before { content: "●"; font-size: 8px; margin-right: 5px; vertical-align: 1px; }
 .pill.warn { background: var(--warn-soft); color: var(--warn); }
 .pill.ahead { background: var(--accent-soft); color: var(--accent); }
+.pill.plain { background: var(--sunken); color: var(--faint); border: 1px solid var(--line); }
+.remote { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+.remote a { color: var(--accent); text-decoration: none; }
+.remote a:hover { text-decoration: underline; }
+.rname { color: var(--faint); }
+.ok { color: var(--muted); font-size: 12.5px; }
 .when { margin-left: auto; flex-shrink: 0; white-space: nowrap; color: var(--faint); }
 .spark { flex-shrink: 0; display: block; }
 
@@ -222,7 +228,14 @@ const marks = r => (r.claude ? `<span class="m-claude" title="Built with Claude"
 const langColor = l => LANG[l] || "var(--faint)";
 
 function card(r) {
-  const sync = [r.ahead && `↑${r.ahead}`, r.behind && `↓${r.behind}`].filter(Boolean).join(" ");
+  const many = r.remotes.length > 1;
+  const syncPills = r.remotes.filter(m => m.push || m.pull || m.missing).slice(0, 2).map(m => {
+    const tag = many ? esc(m.host) + " " : "";
+    if (m.missing) return `<span class="pill warn" title="${esc(m.host)}: branch ${esc(r.branch)} isn't on this remote (${m.push} commits)">${tag}not pushed</span>`;
+    const bits = [m.push && `↑${m.push}`, m.pull && `↓${m.pull}`].filter(Boolean).join(" ");
+    return `<span class="pill ahead" title="${esc(m.host)}: ${m.push} to push, ${m.pull} to pull">${tag}${bits}</span>`;
+  }).join("");
+  const noRemote = !r.remotes.length && r.last ? `<span class="pill plain" title="No git remote configured">local only</span>` : "";
   return `<button class="card${current === r.path ? " sel" : ""}" data-path="${esc(r.path)}">
     <div class="c-head"><span class="c-name">${esc(r.name)}</span><span class="marks">${marks(r)}</span></div>
     ${r.desc ? `<div class="c-desc">${esc(r.desc)}</div>`
@@ -235,7 +248,7 @@ function card(r) {
     <div class="c-foot">
       ${r.branch ? `<span class="mono branch">${esc(r.branch)}</span>` : ""}
       ${r.dirty ? `<span class="pill warn" title="${r.dirty} uncommitted changes">${r.dirty}</span>` : ""}
-      ${sync ? `<span class="pill ahead">${sync}</span>` : ""}
+      ${syncPills}${noRemote}
       <span class="when">${ago(r.last)}</span>
       ${spark(r.weeks)}
     </div>
@@ -278,14 +291,21 @@ function openDrawer(r) {
         <button class="btn" data-open="code">VS Code</button>
         <button class="btn" data-open="terminal">Terminal</button>
         <button class="btn" data-open="finder">Finder</button>
-        ${r.remote ? `<a class="btn" href="${esc(r.remote)}" target="_blank" rel="noopener">GitHub ↗</a>` : ""}
+        ${r.remotes.filter(m => m.url).map(m => `<a class="btn" href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.host)} ↗</a>`).join("")}
         <button class="btn" data-copy>Copy path</button>
       </div>
     </div>
     <div class="d-body">
       <dl class="facts">
         <dt>Branch</dt><dd class="mono">${esc(r.branch || "—")}</dd>
-        <dt>Working tree</dt><dd>${r.dirty ? `<span class="pill warn">${r.dirty} changed</span>` : "Clean"}${r.ahead ? ` <span class="pill ahead">${r.ahead} to push</span>` : ""}${r.behind ? ` <span class="pill ahead">${r.behind} to pull</span>` : ""}</dd>
+        <dt>Remotes</dt><dd>${r.remotes.length ? r.remotes.map(m => {
+          const state = m.missing ? `<span class="pill warn">branch not pushed</span>`
+            : (m.push || m.pull) ? `<span class="pill ahead">${m.push ? m.push + " to push" : ""}${m.push && m.pull ? ", " : ""}${m.pull ? m.pull + " to pull" : ""}</span>`
+            : `<span class="ok">in sync</span>`;
+          return `<div class="remote">${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.host)} ↗</a>` : `<span>${esc(m.host)}</span>`}
+            <span class="mono rname">${esc(m.name)}</span>${state}</div>`;
+        }).join("") : "No remote — this repo only exists on this machine"}</dd>
+        <dt>Working tree</dt><dd>${r.dirty ? `<span class="pill warn">${r.dirty} changed</span>` : "Clean"}</dd>
         <dt>Last commit</dt><dd>${esc(r.msg || "—")} <span style="color:var(--faint)">· ${ago(r.last)}</span></dd>
         ${r.langs.length ? `<dt>Languages</dt><dd>${r.langs.map(([l, p]) => `${l} ${p}%`).join(", ")}</dd>` : ""}
         ${r.stack.length ? `<dt>Stack</dt><dd>${r.stack.map(esc).join(", ")}</dd>` : ""}
@@ -303,7 +323,7 @@ function closeDrawer() {
   current = null; document.querySelectorAll(".card.sel").forEach(el => el.classList.remove("sel")); c?.focus();
 }
 
-const FILTERS = [["all", "Repos", () => true], ["dirty", "With changes", r => r.dirty || r.ahead],
+const FILTERS = [["all", "Repos", () => true], ["dirty", "Not saved", r => r.dirty || r.unsynced],
                  ["claude", "Claude", r => r.claude], ["hermes", "Hermes", r => r.hermes]];
 function render() {
   $("#summary").innerHTML = FILTERS.map(([k, label, fn]) => {
@@ -311,7 +331,7 @@ function render() {
     return `<button class="stat${k === filter ? " on" : ""}${k === "dirty" && n ? " warn" : ""}" data-f="${k}"><b>${n}</b>${label}</button>`;
   }).join("");
   const q = $("#q").value.toLowerCase().trim(), fn = FILTERS.find(f => f[0] === filter)[2];
-  const list = repos.filter(r => fn(r) && (!q || [r.name, r.group, r.desc, r.msg, ...r.stack, ...r.langs.map(l => l[0]), r.readme]
+  const list = repos.filter(r => fn(r) && (!q || [r.name, r.group, r.desc, r.msg, ...r.stack, ...r.langs.map(l => l[0]), ...r.remotes.map(m => m.host + " " + m.name), r.readme]
     .join(" ").toLowerCase().includes(q)));
   const weeks = r => r.weeks.reduce((a, b) => a + b, 0);
   const SORTS = { recent: (a, b) => b.last - a.last, name: (a, b) => a.name.localeCompare(b.name),

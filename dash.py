@@ -27,6 +27,47 @@ STACK = [("Next.js", ['"next"']), ("React", ['"react"']), ("Vue", ['"vue"']), ("
          ("Docker", ["Dockerfile", "docker-compose.yml", "compose.yml"]), ("Foundry", ["foundry.toml"]),
          ("Hardhat", ["hardhat.config.js", "hardhat.config.ts"]), ("Xcode", ["Package.swift"])]
 MAC = platform.system() == "Darwin"
+NAMED_HOSTS = {"github.com": "GitHub", "gitlab.com": "GitLab", "bitbucket.org": "Bitbucket",
+               "codeberg.org": "Codeberg", "git.sr.ht": "SourceHut", "dev.azure.com": "Azure DevOps"}
+
+
+def browse_url(url):
+    """Turn any git remote (ssh, git://, https, with or without credentials) into a URL
+    you can open in a browser. Works for self-hosted Gitea/GitLab/Forgejo too."""
+    url = url.strip()
+    if not url or url.startswith(("/", ".", "file:")) or "://" not in url and ":" not in url:
+        return ""                                               # local path or bare name
+    scheme = "https"
+    if url.startswith(("http://", "https://", "git://", "ssh://")):
+        scheme, _, rest = url.partition("://")
+        if scheme in ("git", "ssh"):
+            scheme = "https"
+    elif "@" in url and ":" in url:                              # git@host:owner/repo.git
+        rest = url.split("@", 1)[1].replace(":", "/", 1)
+    else:
+        return ""
+    rest = rest.split("@")[-1]                                   # drop any user:password@
+    host, _, path = rest.partition("/")
+    host = host.split(":")[0] if host.count(":") and not host.endswith(":") else host
+    if not host or not path:
+        return ""
+    local = host in ("localhost", "127.0.0.1") or host.endswith(".local") or "." not in host \
+        or host.replace(".", "").isdigit()
+    if local:
+        scheme = "http"                                          # LAN servers rarely have TLS
+    return f"{scheme}://{host}/{path.removesuffix('.git').strip('/')}"
+
+
+def host_label(web_url):
+    host = web_url.split("://", 1)[1].split("/")[0]
+    if host in NAMED_HOSTS:
+        return NAMED_HOSTS[host]
+    bare = host.removeprefix("www.")
+    if "gitea" in bare or "forgejo" in bare:
+        return "Gitea"
+    if "gitlab" in bare:
+        return "GitLab"
+    return bare
 
 
 def find_repos():
@@ -55,8 +96,22 @@ def git(repo, *args):
         return ""
 
 
+def sync_state(repo, remote, branch):
+    """How far the current branch is from this remote, using refs already fetched
+    (never touches the network). 'missing' means the branch isn't on that remote at all."""
+    if not branch:
+        return {"push": 0, "pull": 0, "missing": False}
+    ref = f"{remote}/{branch}"
+    if not git(repo, "rev-parse", "--verify", "--quiet", ref).strip():
+        ahead = git(repo, "rev-list", "--count", "HEAD").strip()
+        return {"push": int(ahead or 0), "pull": 0, "missing": True}
+    counts = git(repo, "rev-list", "--left-right", "--count", f"{ref}...HEAD").split()
+    pull, push = (int(counts[0]), int(counts[1])) if len(counts) == 2 else (0, 0)
+    return {"push": push, "pull": pull, "missing": False}
+
+
 def info(repo):
-    root = next(r for r in ROOTS if repo == r or r in repo.parents)
+    root = next((r for r in ROOTS if repo == r or r in repo.parents), repo.parent)
     rel = repo.relative_to(root)
     status = git(repo, "status", "-sb", "--porcelain").splitlines()
     head = status[0] if status else ""
@@ -72,9 +127,19 @@ def info(repo):
         if lang: exts[lang] = exts.get(lang, 0) + 1
     log = git(repo, "log", "--all", "-300", "--format=%an %ae %b").lower()
     names = {e.name for e in os.scandir(repo)}
-    remote = git(repo, "remote", "get-url", "origin").strip()
-    if remote.startswith("git@"):
-        remote = "https://" + remote[4:].replace(":", "/", 1)
+    branch = head[3:].split("...")[0].replace("No commits yet on ", "") if head.startswith("## ") else ""
+    remotes = []
+    for line in git(repo, "remote", "-v").splitlines():
+        if not line.endswith("(fetch)"):
+            continue
+        name, _, url = line.partition("\t")
+        if any(r["name"] == name for r in remotes):
+            continue
+        web = browse_url(url.rsplit(" ", 1)[0])
+        remotes.append({"name": name, "url": web, "host": host_label(web) if web else name,
+                        **sync_state(repo, name, branch)})
+    remotes.sort(key=lambda r: r["name"] != "origin")   # origin first
+    unsynced = [r for r in remotes if r["push"] or r["missing"]]
     readme = next((repo / n for n in ("README.md", "readme.md", "Readme.md", "README") if n in names), None)
     text = readme.read_text(errors="ignore") if readme else ""
     desc = ""
@@ -99,7 +164,7 @@ def info(repo):
         "name": repo.name,
         "path": str(repo),
         "group": str(rel.parent) if str(rel.parent) != "." else "",
-        "branch": head[3:].split("...")[0].replace("No commits yet on ", "") if head.startswith("## ") else "",
+        "branch": branch,
         "ahead": int(head.split("ahead ")[1].split("]")[0].split(",")[0]) if "ahead " in head else 0,
         "behind": int(head.split("behind ")[1].split("]")[0]) if "behind " in head else 0,
         "dirty": len(status) - 1 if status else 0,
@@ -109,7 +174,8 @@ def info(repo):
         "lang": max(exts, key=exts.get) if exts else "",
         "claude": "claude" in log or "CLAUDE.md" in names or ".claude" in names,
         "hermes": "hermes" in log or ".hermes" in names,
-        "remote": remote.removesuffix(".git") if remote.startswith("http") else "",
+        "remotes": remotes,
+        "unsynced": len(unsynced),
         "desc": desc,
         "langs": [[k, round(v * 100 / total)] for k, v in langs],
         "stack": stack[:6],
