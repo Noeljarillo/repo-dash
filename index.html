@@ -54,7 +54,13 @@ header { position: sticky; top: 0; z-index: 10; background: var(--ground); borde
 .tool:hover { color: var(--ink); background: var(--surface); }
 
 /* summary = filters */
-.summary { display: flex; gap: 2px; padding-block: 18px 6px; flex-wrap: wrap; }
+.summary { display: flex; align-items: center; gap: 2px; padding-block: 18px 6px; flex-wrap: wrap; }
+.sortby { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.sortby select { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 28px 6px 10px; cursor: pointer; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
+.sortby select:hover { border-color: var(--line-strong); }
 .stat { display: flex; align-items: baseline; gap: 7px; padding: 6px 12px 6px 0; margin-right: 14px; color: var(--muted);
   border-bottom: 2px solid transparent; }
 .stat b { font: 600 20px var(--sans); color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -152,13 +158,23 @@ aside { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); b
     <div class="brand">Repos <small id="roots"></small></div>
     <label class="search"><input id="q" placeholder="Search name, stack, README…" autocomplete="off" spellcheck="false" aria-label="Search repos"><kbd>/</kbd></label>
     <div class="tools">
-      <button class="tool" id="sort" title="Change sort order">Recent</button>
       <button class="tool" id="reload" title="Scan again">Rescan</button>
     </div>
   </div>
 </header>
 <main class="wrap">
-  <nav class="summary" id="summary" aria-label="Filters"></nav>
+  <nav class="summary" aria-label="Filters and sorting">
+    <span id="summary" style="display:contents"></span>
+    <label class="sortby">Sort by
+      <select id="sort" aria-label="Sort repos by">
+        <option value="recent">Last commit</option>
+        <option value="name">Name A–Z</option>
+        <option value="changes">Uncommitted changes</option>
+        <option value="active">Commits, last 12 weeks</option>
+        <option value="size">Number of files</option>
+      </select>
+    </label>
+  </nav>
   <div id="list"><p class="empty">Scanning for repos…</p></div>
 </main>
 <div id="drawer" hidden></div>
@@ -171,7 +187,7 @@ const LANG = { Python:"#3572A5", TypeScript:"#3178c6", JavaScript:"#e5c33a", Go:
 const APPS = { cursor: "Cursor", code: "VS Code", terminal: "Terminal", finder: "Finder" };
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d } catch { return d } },
                 set(k, v) { try { localStorage.setItem(k, v) } catch {} } };
-let repos = [], filter = store.get("f", "all"), sort = store.get("s", "Recent"), current = null;
+let repos = [], filter = store.get("f", "all"), sort = store.get("s2", "recent"), current = null;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const home = p => p.replace(/^\/(Users|home)\/[^/]+/, "~");
@@ -297,7 +313,12 @@ function render() {
   const q = $("#q").value.toLowerCase().trim(), fn = FILTERS.find(f => f[0] === filter)[2];
   const list = repos.filter(r => fn(r) && (!q || [r.name, r.group, r.desc, r.msg, ...r.stack, ...r.langs.map(l => l[0]), r.readme]
     .join(" ").toLowerCase().includes(q)));
-  list.sort(sort === "Recent" ? (a, b) => b.last - a.last : (a, b) => a.name.localeCompare(b.name));
+  const weeks = r => r.weeks.reduce((a, b) => a + b, 0);
+  const SORTS = { recent: (a, b) => b.last - a.last, name: (a, b) => a.name.localeCompare(b.name),
+    changes: (a, b) => (b.dirty + b.ahead) - (a.dirty + a.ahead) || b.last - a.last,
+    active: (a, b) => weeks(b) - weeks(a) || b.last - a.last,
+    size: (a, b) => b.tree.length - a.tree.length || a.name.localeCompare(b.name) };
+  list.sort(SORTS[sort] || SORTS.recent);
   if (!list.length) { $("#list").innerHTML = `<p class="empty">${repos.length ? "No repos match this search." : "No git repos found in the scanned folders."}</p>`; return; }
   const groups = new Map();
   for (const r of list) { groups.has(r.group) || groups.set(r.group, []); groups.get(r.group).push(r); }
@@ -333,7 +354,7 @@ $("#summary").addEventListener("click", e => {
   const b = e.target.closest("[data-f]"); if (!b) return;
   filter = b.dataset.f; store.set("f", filter); render();
 });
-$("#sort").onclick = () => { sort = sort === "Recent" ? "A–Z" : "Recent"; store.set("s", sort); $("#sort").textContent = sort; render(); };
+$("#sort").onchange = e => { sort = e.target.value; store.set("s2", sort); render(); };
 $("#reload").onclick = load;
 $("#q").addEventListener("input", render);
 $("#q").addEventListener("keydown", e => {
@@ -345,7 +366,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "/" && document.activeElement !== $("#q")) { e.preventDefault(); $("#q").focus(); }
 });
 
-$("#sort").textContent = sort; load();
+$("#sort").value = sort; load();
 </script>
 </body>
 </html>
